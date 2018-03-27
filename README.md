@@ -31,25 +31,19 @@ Starts a prompt which allows you to manage current order.
 
 ### Usage example
 
+```
 $ python st2pizza.py 2F4GG6 A97D45
 &gt; show pizzas
 5 pizzas found
-
 1: Margarita (tomaatti, juusto)
-
 2: Bolognese (jauheliha)
-
 3: Opera (kinkku, tonnikala)
-
 4: Napoli (kinkku, paprika)
-
 5: Francescana (herkkusieni, kinkku)
-
 &gt; Do you want to order Margarita (tomaatti, juusto)? &gt; y
-
 &gt; quit
-
 $
+```
 
 ## Authors
 
