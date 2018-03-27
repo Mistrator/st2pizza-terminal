@@ -3,8 +3,7 @@ import requests
 import os
 import platform
 from enum import Enum
-
-API_URL = "http://st2.pizza/api/"
+from operator import itemgetter
 
 class Severity(Enum):
 	INFO = 1
@@ -33,6 +32,12 @@ class LinuxColor(Enum):
 	LIGHT_PURPLE = "\033[1;35m"
 	LIGHT_CYAN = "\033[1;36m"
 	WHITE = "\033[1;37m"
+
+
+API_URL = "http://st2.pizza/api/"
+PIZZA_COLOR = LinuxColor.YELLOW
+USER_COLOR = LinuxColor.WHITE
+
 
 def print_color(msg, col, newline=True):
 	if platform.system() == "Linux":
@@ -67,18 +72,31 @@ def log(msg, type, newline=True, terminate=False):
 			sys.exit(0)
 
 
-def request(relative_url, type):
+def request(relative_url, type, body=None):
 	url = API_URL + relative_url
 	try:
 		if type == RequestType.GET:
 			response = requests.get(url)
 		elif type == RequestType.POST:
-			response = requests.post(url)
+			if body == None:
+				log("Tried to make a POST request with empty body", Severity.WARN)
+			else:
+				response = requests.post(url, json=body)
 		else:
 			log("Invalid request type", Severity.ERROR, terminate=True)
 	except ConnectionError:
-		log("Can't reach server (no internet connection or server is down?)", Severity.ERROR, terminate=True)
+		log("Can't reach server (no internet connection or server down?)", Severity.ERROR, terminate=True)
 	return response.ok, (response.json() if response.ok else "")
+
+# Try to parse integer from string
+# Must be between low and high, inclusive
+def try_parse_int(to_parse, low, high):
+	try:
+		parsed = int(to_parse)
+		return (low <= parsed and parsed <= high), parsed
+	except ValueError:
+		return False, low
+
 
 # replace non-ASCII characters with ASCII ones
 def print_encode(enc_str):
@@ -99,6 +117,20 @@ def print_encode(enc_str):
 	return cres
 
 
+def print_single_pizza(cur_pizza, print_toppings, newline=False):
+	print_color(print_encode(cur_pizza["name"]), PIZZA_COLOR, (newline and not print_toppings))
+
+	if print_toppings:
+		log(" (", Severity.INFO, False)
+
+		for i, cur_topping in enumerate(cur_pizza["toppings"]):
+			log(print_encode(cur_topping["name"]), Severity.INFO, False)
+			if i != len(cur_pizza["toppings"])-1:
+				log(", ", Severity.INFO, False)
+
+		log(")", Severity.INFO, newline)
+
+
 def print_pizzas():
 	req_ok, pizza_data = request("pizzas", RequestType.GET)
 	if not req_ok:
@@ -108,15 +140,7 @@ def print_pizzas():
 
 	for cur_pizza in pizza_data:
 		log(str(cur_pizza["id"]) + ": ", Severity.INFO, False)
-		print_color(print_encode(cur_pizza["name"]), LinuxColor.YELLOW, False)
-		log(" (", Severity.INFO, False)
-
-		for i, cur_topping in enumerate(cur_pizza["toppings"]):
-			log(print_encode(cur_topping["name"]), Severity.INFO, False)
-			if i != len(cur_pizza["toppings"])-1:
-				log(", ", Severity.INFO, False)
-
-		log(")", Severity.INFO)
+		print_single_pizza(cur_pizza, True, True)
 
 
 def print_toppings():
@@ -132,7 +156,13 @@ def print_toppings():
 
 
 # print all pizzas in current order by owner
-def print_order(order_data):
+def print_order(order_id):
+	req_ok, order_data = request("orders/" + order_id + "/entries/", RequestType.GET)
+
+	if not req_ok:
+		log("Failed to fetch order data", Severity.ERROR, terminate=True)
+
+
 	log(str(len(order_data)) + " pizzas in total", Severity.INFO)
 
 	pizzas_by_owner = {}
@@ -145,21 +175,132 @@ def print_order(order_data):
 			pizzas_by_owner[owner] = [cur_pizza["pizza"]]
 
 	for owner, pizzas in pizzas_by_owner.items():
-		print_color(owner + ": ", LinuxColor.WHITE, False)
+		print_color(owner + ": ", USER_COLOR, False)
 
 		for i, cur_pizza in enumerate(pizzas):
-			print_color(print_encode(cur_pizza["name"]), LinuxColor.YELLOW, False)
-			log(" (", Severity.INFO, False)
-
-			for j, cur_topping in enumerate(cur_pizza["toppings"]):
-				log(print_encode(cur_topping["name"]), Severity.INFO, False)
-				if j != len(cur_pizza["toppings"])-1:
-					log(", ", Severity.INFO, False)
+			print_single_pizza(cur_pizza, True, False)
 
 			if i != len(pizzas)-1:
-				log("), ", Severity.INFO, False)
+				log(", ", Severity.INFO, False)
 			else:
-				log(")", Severity.INFO)
+				log("", Severity.INFO)
+
+
+# return edit distance (Levenshtein distance) between strings a and b
+def edit_distance(str_a, str_b):
+	str_a = " " + str_a
+	str_b = " " + str_b
+	n = len(str_a)
+	m = len(str_b)
+
+	INF = 1000000005
+	dp = []
+
+	for i in range(0, n):
+		narr = []
+		for j in range(0, m):
+			narr.append(INF)
+		dp.append(narr)
+
+	for i in range(0, n):
+		dp[i][0] = i
+
+	for j in range(0, m):
+		dp[0][j] = j
+
+	for i in range(1, n):
+		for j in range(1, m):
+			cost = (0 if str_a[i] == str_b[j] else 1)
+			dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost)
+
+	return dp[n-1][m-1]
+
+
+def send_order(pizza_id, user_id, order_id):
+	post_body = {"orderID": order_id, "userID": user_id, "pizzaID": pizza_id}
+
+	req_ok, response = request("entries", RequestType.POST, post_body)
+	if not req_ok:
+		log("Order failed", Severity.ERROR, terminate=True)
+
+	return response
+
+
+# parse user input (pizza name/id) and return closest matching pizza
+def parse_order(raw_order):
+	req_ok, pizza_data = request("pizzas", RequestType.GET)
+	if not req_ok:
+		log("Failed to fetch pizza list", Severity.ERROR, terminate=True)
+
+	enc_order = print_encode(raw_order)
+	matching_pizzas = []
+
+	# rank pizzas by edit distance from ID and name
+	for cur_pizza in pizza_data:
+		id_dist = edit_distance(str(cur_pizza["id"]), enc_order)
+		name_dist = edit_distance(str(cur_pizza["name"]), enc_order)
+		matching_pizzas.append([min(id_dist, name_dist), cur_pizza])
+
+	matching_pizzas = sorted(matching_pizzas, key=itemgetter(0))
+
+	best_dist = matching_pizzas[0][0]
+	best_matches = [] 
+
+	# select pizzas with smallest edit distance
+	for cur_match in matching_pizzas:
+		cur_dist = cur_match[0]
+		if cur_dist > best_dist:
+			break
+		best_matches.append(cur_match[1])
+
+	# ask which pizza user meant if there are several possibilities
+	if len(best_matches) > 1:
+		log("Did you mean ", Severity.INFO, False)
+
+		for i, cur_pizza in enumerate(best_matches):
+			log("(" + str(i+1) + ") ", Severity.INFO, False)
+
+			print_single_pizza(cur_pizza, True, False)
+
+			if i < len(best_matches)-2:
+				log(", ", Severity.INFO, False)
+			elif i == len(best_matches)-2:
+				log(" or ", Severity.INFO, False)
+			elif i == len(best_matches)-1:
+				log("?", Severity.INFO)
+
+		inp_ok = False
+
+		while not inp_ok:
+			log("Enter selection [1.." + str(len(best_matches)) + "] > ", Severity.INFO, False)
+			usr_input = input()
+			inp_ok, selection = try_parse_int(usr_input, 1, len(best_matches))
+
+		return best_matches[selection-1]
+
+	return best_matches[0]
+
+
+# add pizza to current order
+# raw_order: unprocessed user selection
+def order_pizza(raw_order, user_id, order_id):
+	selected_pizza = parse_order(raw_order)
+
+	inp_ok = False
+	while not inp_ok:
+		log("Do you want to order ", Severity.INFO, False)
+		print_single_pizza(selected_pizza, True, False)
+		log("? (y/n) > ", Severity.INFO, False)
+
+		usr_inp = input().lower()
+		if len(usr_inp) == 1:
+			if usr_inp[0] == "y":
+				inp_ok = True
+			elif usr_inp[0] == "n":
+				return
+
+
+	response = send_order(selected_pizza["id"], user_id, order_id)
 
 
 # --- PROGRAM ENTRY POINT ---
@@ -174,7 +315,7 @@ req_ok, user_data = request("users/" + user_id + "/", RequestType.GET)
 if not req_ok:
 	log("User doesn't exist", Severity.ERROR, terminate=True)
 
-req_ok, order_data = request("orders/" + order_id + "/entries/", RequestType.GET)
+req_ok, order_data = request("orders/" + order_id + "/", RequestType.GET)
 if not req_ok:
 	log("Order doesn't exist", Severity.ERROR, terminate=True)
 
@@ -189,9 +330,9 @@ while True:
 	if usr_input[0] == "quit" or usr_input[0] == "exit":
 		break
 	elif usr_input[0] == "help" or usr_input[0] == "?":
-		log("show <order|pizzas|toppings>: show current order or existing pizzas/toppings", Severity.INFO)
+		log("show <order|pizzas|toppings>: show current order or lists of existing pizzas/toppings", Severity.INFO)
 		log("create: create new pizza", Severity.INFO)
-		log("order: add pizza to current order", Severity.INFO)
+		log("order <pizza ID|name>: add pizza to current order", Severity.INFO)
 		log("help|?: show command usage", Severity.INFO)
 		log("quit|exit: exit " + sys.argv[0], Severity.INFO)
 	elif usr_input[0] == "show":
@@ -199,7 +340,7 @@ while True:
 			log("Usage: show <order|pizzas|toppings>", Severity.INFO)
 		else:
 			if usr_input[1] == "order":
-				print_order(order_data)
+				print_order(order_id)
 			elif usr_input[1] == "pizzas":
 				print_pizzas()
 			elif usr_input[1] == "toppings":
@@ -209,6 +350,16 @@ while True:
 	elif usr_input[0] == "create":
 		pass
 	elif usr_input[0] == "order":
-		pass
+		if len(usr_input) < 2:
+			log("Usage: order <pizza ID|name>", Severity.INFO)
+			log("Hint: \"show pizzas\" - show all available pizzas", Severity.INFO)
+		else:
+			# support pizza names with spaces
+			order_query = ""
+			for i in range(1, len(usr_input)):
+				order_query += usr_input[i]
+				if i != len(usr_input)-1:
+					order_query += " "
+			order_pizza(order_query, user_id, order_id)
 	else:
 		log("Unknown command, enter \"help\" for usage information", Severity.INFO)
