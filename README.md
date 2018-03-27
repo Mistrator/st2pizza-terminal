@@ -38,6 +38,7 @@ $ python st2pizza.py 2F4GG6 A97D45
 3: Opera (kinkku, tonnikala)
 4: Napoli (kinkku, paprika)
 5: Francescana (herkkusieni, kinkku)
+> order Margarita
 Do you want to order Margarita (tomaatti, juusto)? > y
 > quit
 $
