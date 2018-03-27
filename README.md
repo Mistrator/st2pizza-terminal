@@ -15,9 +15,7 @@ A terminal client for st2pizza service.
 
 ## Usage
 
-python st2pizza.py <user ID> <order ID>
-
-Starts a prompt which allows you to manage current order.
+python st2pizza.py &lt;user ID&gt; &lt;order ID&gt;: start st2pizza prompt
 
 ### Commands
 
