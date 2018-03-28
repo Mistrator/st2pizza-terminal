@@ -14,7 +14,7 @@ class RequestType(Enum):
 	GET = 1
 	POST = 2
 
-class LinuxColor(Enum):
+class AnsiColor(Enum):
 	NONE = "\033[0m"
 	BLACK = "\033[0;30m"
 	RED = "\033[0;31m"
@@ -35,16 +35,25 @@ class LinuxColor(Enum):
 
 
 API_URL = "http://st2.pizza/api/"
-PIZZA_COLOR = LinuxColor.YELLOW
-USER_COLOR = LinuxColor.WHITE
+PIZZA_COLOR = AnsiColor.YELLOW
+USER_COLOR = AnsiColor.WHITE
 
 
 def print_color(msg, col, newline=True):
-	if platform.system() == "Linux":
+	pform = platform.system()
+	col_support = (pform == "Linux" or pform == "Darwin") # Darwin = Mac
+
+	# Actually version has to be 10 and release ID >= 1511 (Threshold 2)
+	# However, this can't be easily checked and since 1511 is one of the first
+	# updates for 10, assume that colors always work with 10
+	if pform == "Windows" and platform.release() == "10":
+		col_support = True
+
+	if col_support:
 		if newline:
-			print(col.value + msg + LinuxColor.NONE.value)
+			print(col.value + msg + AnsiColor.NONE.value)
 		else:
-			print(col.value + msg + LinuxColor.NONE.value, end="")
+			print(col.value + msg + AnsiColor.NONE.value, end="")
 	else:
 		if newline:
 			print(msg)
@@ -54,9 +63,9 @@ def print_color(msg, col, newline=True):
 
 def log(msg, type, newline=True, terminate=False):
 	if type == Severity.WARN:
-		print_color("warning: ", LinuxColor.YELLOW, False)
+		print_color("warning: ", AnsiColor.YELLOW, False)
 	elif type == Severity.ERROR:
-		print_color("error: ", LinuxColor.LIGHT_RED, False)
+		print_color("error: ", AnsiColor.LIGHT_RED, False)
 	elif type != Severity.INFO:
 		log("Invalid log severity", Severity.ERROR, terminate=True)
 
@@ -152,7 +161,7 @@ def print_toppings():
 
 	for cur_topping in topping_data:
 		log(str(cur_topping["id"]) + ": ", Severity.INFO, False)
-		print_color(print_encode(cur_topping["name"]), LinuxColor.NONE)	
+		print_color(print_encode(cur_topping["name"]), AnsiColor.NONE)	
 
 
 # print all pizzas in current order by owner
