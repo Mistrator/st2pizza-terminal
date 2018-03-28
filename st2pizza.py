@@ -235,9 +235,10 @@ def parse_order(raw_order):
 	enc_order = print_encode(raw_order)
 	matching_pizzas = []
 
-	# rank pizzas by edit distance from ID and name
+	# rank pizzas by edit distance from name
 	for cur_pizza in pizza_data:
-		id_dist = edit_distance(str(cur_pizza["id"]), enc_order)
+		# only exact matches for ID
+		id_dist = (0 if str(cur_pizza["id"]) == enc_order else 1000000005)
 		name_dist = edit_distance(str(cur_pizza["name"]), enc_order)
 		matching_pizzas.append([min(id_dist, name_dist), cur_pizza])
 
@@ -303,6 +304,110 @@ def order_pizza(raw_order, user_id, order_id):
 	response = send_order(selected_pizza["id"], user_id, order_id)
 
 
+def send_new_pizza(name, toppings):
+	topping_ids = []
+	for cur_topping in toppings:
+		topping_ids.append(cur_topping["id"])
+
+	post_body = { "name": name, "toppings": topping_ids }
+	req_ok, response = request("pizzas", RequestType.POST, post_body)
+
+	if not req_ok:
+		log("Failed to create new pizza", Severity.ERROR, terminate=True)
+
+	return response
+
+def create_pizza():
+	req_ok, pizza_data = request("pizzas", RequestType.GET)
+	if not req_ok:
+		log("Failed to fetch pizza list", Severity.ERROR, terminate=True)
+
+	req_ok, topping_data = request("toppings", RequestType.GET)
+	if not req_ok:
+		log("Failed to fetch topping list", Severity.ERROR, terminate=True)
+
+	name_ok = False
+	while not name_ok:
+		log("Name the pizza > ", Severity.INFO, False)
+		pizza_name = print_encode(input())
+		if len(pizza_name) > 0:
+			name_ok = True
+		for cur_pizza in pizza_data:
+			if print_encode(cur_pizza["name"]) == pizza_name:
+				log("A pizza called " + pizza_name + " already exists", Severity.WARN, terminate=False)
+				name_ok = False
+				break
+	
+	usr_toppings = []
+
+	print_toppings()
+
+	while True:
+		log("Add new topping (empty line finishes) > ", Severity.INFO, False)
+		usr_input = print_encode(input())
+
+		if len(usr_input) == 0 and len(usr_toppings) > 0:
+			break
+
+		topping_dists = []
+		for cur_topping in topping_data:
+			id_dist = (0 if str(cur_topping["id"]) == usr_input else 1000000005)
+			name_dist = edit_distance(str(cur_topping["name"]), usr_input)
+			topping_dists.append([min(id_dist, name_dist), cur_topping])
+
+		topping_dists = sorted(topping_dists, key=itemgetter(0))
+
+		best_dist = topping_dists[0][0]
+		best_matches = []
+
+		for cur_match in topping_dists:
+			cur_dist = cur_match[0]
+			if cur_dist > best_dist:
+				break
+			best_matches.append(cur_match[1])
+
+		if len(best_matches) > 1:
+			log("Did you mean ", Severity.INFO, False)
+	
+			for i, cur_topping in enumerate(best_matches):
+				log("(" + str(i+1) + ") ", Severity.INFO, False)
+	
+				log(print_encode(cur_topping["name"]), Severity.INFO, False)
+	
+				if i < len(best_matches)-2:
+					log(", ", Severity.INFO, False)
+				elif i == len(best_matches)-2:
+					log(" or ", Severity.INFO, False)
+				elif i == len(best_matches)-1:
+					log("?", Severity.INFO)
+	
+			inp_ok = False
+			while not inp_ok:
+				log("Enter selection [1.." + str(len(best_matches)) + "] > ", Severity.INFO	, False)
+				usr_input = input()
+				inp_ok, selection = try_parse_int(usr_input, 1, len(best_matches))
+	
+			usr_toppings.append(best_matches[selection-1])
+
+		else:
+			usr_toppings.append(best_matches[0])
+
+	pizza_prt = { "name": pizza_name, "toppings": usr_toppings }
+
+	while True:
+		log("Do you want to create ", Severity.INFO, False)
+		print_single_pizza(pizza_prt, True)
+		log("? (y/n) > ", Severity.INFO, False)
+
+		usr_sel = input().lower()
+		if usr_sel == "y":
+			break
+		elif usr_sel == "n":
+			return
+
+	send_new_pizza(pizza_name, usr_toppings)
+
+
 # --- PROGRAM ENTRY POINT ---
 
 if len(sys.argv) != 3:
@@ -331,7 +436,7 @@ while True:
 		break
 	elif usr_input[0] == "help" or usr_input[0] == "?":
 		log("show <order|pizzas|toppings>: show current order or lists of existing pizzas/toppings", Severity.INFO)
-		log("create: create new pizza", Severity.INFO)
+		log("create pizza: create new pizza", Severity.INFO)
 		log("order <pizza ID|name>: add pizza to current order", Severity.INFO)
 		log("help|?: show command usage", Severity.INFO)
 		log("quit|exit: exit " + sys.argv[0], Severity.INFO)
@@ -348,7 +453,10 @@ while True:
 			else:
 				log("Usage: show <order|pizzas|toppings>", Severity.INFO)
 	elif usr_input[0] == "create":
-		pass
+		if len(usr_input) < 2:
+			log("Usage: create pizza", Severity.INFO)
+		else:
+			create_pizza()
 	elif usr_input[0] == "order":
 		if len(usr_input) < 2:
 			log("Usage: order <pizza ID|name>", Severity.INFO)

@@ -24,6 +24,8 @@ python st2pizza.py &lt;user ID&gt; &lt;order ID&gt;: start st2pizza prompt
 	* show pizzas: list all available pizzas
 	* show toppings: list all available toppings
 * order <pizza ID | pizza name>: add a pizza to current order
+* create
+	* create pizza: create new customized pizza
 * help | ?: print usage information
 * quit | exit: exit st2pizza prompt and quit program
 
